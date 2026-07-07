@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="mobile-web-app-capable" content="yes" />
+<title>Katsebushi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap');
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: #17151a; overscroll-behavior: none; }
+  input::placeholder { color: #6b6459; }
+  button { font: inherit; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback } = React;
+
+const INK="#17151a", PANEL="#211e24", PANEL2="#2a262d", PARCH="#e9e2d0", MUTED="#9c9284",
+      GOLD="#c9a35c", RED="#a3413a", JADE="#7a9576", BLUE="#6f8fa8", HAIRLINE="#3a3540";
+const displayFont={fontFamily:"'Shippori Mincho', serif"};
+const bodyFont={fontFamily:"'Zen Kaku Gothic New','Inter',sans-serif"};
+const monoFont={fontFamily:"'JetBrains Mono',monospace"};
+
+/* ---- 2024 Monk math ---- */
+const abilityMod = s => Math.floor((s-10)/2);
+const profBonus = l => 2 + Math.floor((l-1)/4);
+const dieSize = l => l<5?6:l<11?8:l<17?10:12;
+const focusMax = l => l<2?0:l;
+const moveBonus = l => l<2?0:l<6?10:l<10?15:l<14?20:l<18?25:30;
+const wobMax = w => Math.max(1,w);
+const hasFeat = (c,id) => (c.feats||[]).some(f => (typeof f==="string" ? f.toLowerCase()===id : f.id===id));
+
+/* Curated feat catalog — simplified mechanical summaries for app math.
+   Always double-check exact wording against your own 2024 PHB; this app
+   approximates the numbers that actually change your moveset. */
+const FEATS = {
+  alert: { name:"Alert", summary:"Can't be Surprised while conscious. Initiative bonus equal to proficiency bonus.", chooseAbility:null },
+  grappler: { name:"Grappler", summary:"Advantage on attack rolls against a creature you're Grappling.", chooseAbility:null },
+  mobile: { name:"Mobile", summary:"Speed +10 ft. No Opportunity Attack from a creature you just attacked in melee. Difficult terrain doesn't slow your Dash.", chooseAbility:null },
+  tough: { name:"Tough", summary:"Max HP +2 per character level, retroactive now and again every level after.", chooseAbility:null },
+  resilient: { name:"Resilient", summary:"+1 to a chosen ability (max 20) and proficiency in its saving throw.", chooseAbility:["STR","DEX","CON","INT","WIS","CHA"] },
+  crusher: { name:"Crusher", summary:"+1 to STR, CON, or DEX (max 20). Once/turn on a Bludgeoning hit (your Unarmed Strikes count): move the target 5ft or gain advantage on attacks against it until your next turn.", chooseAbility:["STR","CON","DEX"] },
+  skillExpert: { name:"Skill Expert", summary:"+1 to a chosen ability (max 20), plus a skill proficiency/expertise (not tracked here).", chooseAbility:["STR","DEX","CON","INT","WIS","CHA"] },
+  observant: { name:"Observant", summary:"+1 to INT or WIS (max 20). Passive Perception and Passive Investigation +5.", chooseAbility:["INT","WIS"] },
+};
+
+function derive(c){
+  const mod = Object.fromEntries(Object.entries(c.scores).map(([k,v])=>[k,abilityMod(v)]));
+  const prof = profBonus(c.level), die = dieSize(c.level);
+  const hasMobile = hasFeat(c,"mobile"), hasAlert = hasFeat(c,"alert"), hasGrappler = hasFeat(c,"grappler"), hasCrusher = hasFeat(c,"crusher"), hasObservant = hasFeat(c,"observant");
+  const atkBonus = prof+mod.DEX;
+  return {
+    mod, prof, die,
+    focusMaxVal: focusMax(c.level),
+    speed: 30+moveBonus(c.level)+(hasMobile?10:0),
+    ac: 10+mod.DEX+mod.WIS,
+    atkBonus,
+    unarmedDmg: `1d${die}+${mod.DEX}`,
+    stunDC: 8+prof+mod.WIS,
+    grappleDC: 8+atkBonus,
+    deflectFormula: `1d10+${mod.DEX}+${c.level}`,
+    wobHeal: `1d${die}+${mod.WIS}`,
+    wobUses: wobMax(mod.WIS),
+    uncannyHeal: `1d${die}+${c.level}`,
+    slowFall: 5*c.level,
+    flurryStrikes: c.level>=10?3:2,
+    deflectAnyType: c.level>=13,
+    initiative: mod.DEX+(hasAlert?prof:0),
+    passivePerception: 10+mod.WIS+prof+(hasObservant?5:0),
+    hasMobile, hasAlert, hasGrappler, hasCrusher, hasObservant,
+  };
+}
+
+const LEVEL_FEATURES = {
+  1:{auto:[{name:"Martial Arts",detail:"Bonus unarmed strike; roll Martial Arts die for unarmed damage; use DEX instead of STR for unarmed/monk-weapon attacks, damage, and Grapple/Shove DC."},{name:"Unarmored Defense",detail:"AC = 10 + DEX mod + WIS mod, unarmored and shieldless."}]},
+  2:{auto:[{name:"Monk's Focus",detail:"Gain Focus Points to fuel Flurry of Blows, Patient Defense, Step of the Wind."},{name:"Unarmored Movement",detail:"Speed increases while unarmored; scales again at 6, 10, 14, 18."},{name:"Uncanny Metabolism",detail:"Once per long rest, on rolling Initiative, regain all Focus Points and heal 1 Martial Arts die + Monk level."}]},
+  3:{auto:[{name:"Deflect Attacks",detail:"Reaction: reduce damage by 1d10 + DEX mod + Monk level. If reduced to 0, spend 1 FP to redirect to a nearby creature."},{name:"Subclass — Warrior of the Open Hand",detail:"Already chosen."},{name:"Open Hand Technique",detail:"On a Flurry hit: Addle (no opportunity attacks), Push (STR save or pushed 15ft), or Topple (DEX save or Prone)."}]},
+  4:{auto:[{name:"Slow Fall",detail:"Reaction when falling: reduce fall damage by 5 x Monk level."}],choice:"asi"},
+  5:{auto:[{name:"Extra Attack",detail:"Attack twice instead of once with the Attack action."},{name:"Stunning Strike",detail:"Once/turn on a hit, spend 1 FP: CON save or Stunned until your next turn. Success: speed halved, next attack against it has advantage."}]},
+  6:{auto:[{name:"Empowered Strikes",detail:"Unarmed Strike damage can be Force instead of its normal type."},{name:"Subclass — Wholeness of Body",detail:"Bonus action: heal 1 Martial Arts die + WIS mod (min 1). Uses/long rest = WIS mod (min 1)."}]},
+  7:{auto:[{name:"Evasion",detail:"DEX-save-for-half effects: none on success, half on failure (not while Incapacitated)."}]},
+  8:{choice:"asi"},
+  9:{auto:[{name:"Acrobatic Movement",detail:"Unarmored: move along vertical surfaces and across liquids without falling."}]},
+  10:{auto:[{name:"Heightened Focus",detail:"Flurry: 1 FP now grants 3 strikes. Patient Defense: 1 FP also grants temp HP (2 Martial Arts die). Step of the Wind: 1 FP brings a willing Large-or-smaller creature with you."},{name:"Self-Restoration",detail:"End of each turn, remove Charmed/Frightened/Poisoned from yourself. No Exhaustion from missing food/drink."}]},
+  11:{auto:[{name:"Subclass — Fleet Step",detail:"Any bonus action other than Step of the Wind lets you also use Step of the Wind right after."}]},
+  12:{choice:"asi"},
+  13:{auto:[{name:"Deflect Energy",detail:"Deflect Attacks now works vs any damage type, not just B/P/S."}]},
+  14:{auto:[{name:"Disciplined Survivor",detail:"Proficiency in all saves. On a failed save, spend 1 FP to reroll (keep new result)."}]},
+  15:{auto:[{name:"Perfect Focus",detail:"On Initiative without Uncanny Metabolism, regain Focus up to 4 if you have 3 or fewer."}]},
+  16:{choice:"asi"},
+  17:{auto:[{name:"Subclass — Quivering Palm",detail:"On an Unarmed Strike hit, spend 4 FP for vibrations lasting Monk-level days. Ending them (or forgoing an attack) forces CON save: 10d12 Force dmg on fail, half on success. One target at a time."}]},
+  18:{auto:[{name:"Superior Defense",detail:"Start of turn, spend 3 FP: resistance to all damage except Force, 1 min or until Incapacitated."}]},
+  19:{choice:"epicBoon"},
+  20:{auto:[{name:"Body and Mind",detail:"DEX and WIS +4 each, max 25. Automatic."}]},
+};
+
+const DEFAULT_CHARACTER = { level:6, scores:{STR:12,DEX:16,CON:13,INT:8,WIS:17,CHA:10}, feats:[{id:"alert",name:"Alert"},{id:"grappler",name:"Grappler"}], hp:{current:41,max:41}, focusCurrent:6, wobCurrent:3 };
+
+/* ---- localStorage-backed save system (standalone version) ---- */
+const IDX_KEY="katsebushiStandalone:saveIndex", ACTIVE_KEY="katsebushiStandalone:activeSaveId";
+const saveDataKey = id => `katsebushiStandalone:save:${id}`;
+const newId = () => `s${Date.now()}${Math.floor(Math.random()*1000)}`;
+const timeAgo = ts => { const d=Math.max(0,Date.now()-ts), m=Math.floor(d/60000); if(m<1) return "just now"; if(m<60) return `${m}m ago`; const h=Math.floor(m/60); if(h<24) return `${h}h ago`; return `${Math.floor(h/24)}d ago`; };
+
+function lsGet(key){ try{ const v=localStorage.getItem(key); return v==null?null:JSON.parse(v);}catch(e){return null;} }
+function lsSet(key,val){ try{ localStorage.setItem(key, JSON.stringify(val)); return true; }catch(e){ console.error(e); return false; } }
+function lsDel(key){ try{ localStorage.removeItem(key); return true; }catch(e){ return false; } }
+
+function useSaveSystem(){
+  const [index,setIndex]=useState([]);
+  const [activeId,setActiveId]=useState(null);
+  const [character,setCharacterState]=useState(DEFAULT_CHARACTER);
+  const [ready,setReady]=useState(false);
+
+  useEffect(()=>{
+    let idx = lsGet(IDX_KEY) || [];
+    let active = lsGet(ACTIVE_KEY);
+    if(idx.length===0){
+      const id=newId();
+      idx=[{id,name:"Katsebushi — Main",level:DEFAULT_CHARACTER.level,updatedAt:Date.now()}];
+      active=id;
+      lsSet(IDX_KEY,idx); lsSet(ACTIVE_KEY,active); lsSet(saveDataKey(id),DEFAULT_CHARACTER);
+    }
+    if(!active || !idx.find(s=>s.id===active)) active = idx[0].id;
+    const data = lsGet(saveDataKey(active)) || DEFAULT_CHARACTER;
+    setIndex(idx); setActiveId(active); setCharacterState(data); setReady(true);
+  },[]);
+
+  const persistIndex = useCallback(idx => { setIndex(idx); lsSet(IDX_KEY, idx); }, []);
+
+  const setCharacter = useCallback(next => {
+    setCharacterState(next);
+    if(!activeId) return;
+    lsSet(saveDataKey(activeId), next);
+    setIndex(idx => { const u = idx.map(s => s.id===activeId ? {...s, level: next.level, updatedAt: Date.now()} : s); lsSet(IDX_KEY,u); return u; });
+  }, [activeId]);
+
+  const switchTo = useCallback(id => {
+    const data = lsGet(saveDataKey(id)) || DEFAULT_CHARACTER;
+    setActiveId(id); setCharacterState(data); lsSet(ACTIVE_KEY, id);
+  }, []);
+
+  const createSave = useCallback((name, source) => {
+    const id = newId();
+    const data = source ? {...source} : {...DEFAULT_CHARACTER};
+    const ok = lsSet(saveDataKey(id), data);
+    if(!ok){ alert("Save failed — storage unavailable."); return null; }
+    const entry = {id, name, level:data.level, updatedAt:Date.now()};
+    persistIndex([...index, entry]);
+    return id;
+  }, [index, persistIndex]);
+
+  const renameSave = useCallback((id,name) => persistIndex(index.map(s=>s.id===id?{...s,name}:s)), [index,persistIndex]);
+
+  const deleteSave = useCallback(id => {
+    const remaining = index.filter(s=>s.id!==id);
+    lsDel(saveDataKey(id));
+    if(remaining.length===0){
+      const freshId=newId();
+      const entry={id:freshId,name:"Katsebushi — Main",level:DEFAULT_CHARACTER.level,updatedAt:Date.now()};
+      lsSet(saveDataKey(freshId), DEFAULT_CHARACTER);
+      persistIndex([entry]); switchTo(freshId); return;
+    }
+    persistIndex(remaining);
+    if(id===activeId) switchTo(remaining[0].id);
+  }, [index, activeId, persistIndex, switchTo]);
+
+  return {index, activeId, character, ready, setCharacter, switchTo, createSave, renameSave, deleteSave};
+}
+
+/* ---- UI atoms ---- */
+const btnGhost = {width:26,height:26,borderRadius:6,border:`1px solid ${HAIRLINE}`,background:PANEL2,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"};
+
+function Dots({current,max,color,onChange,size=14}){
+  return <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+    {Array.from({length:max}).map((_,i)=>{ const filled=i<current;
+      return <button key={i} onClick={()=>onChange(i<current?i:i+1)} style={{width:size,height:size,borderRadius:"50%",border:`1.5px solid ${filled?color:HAIRLINE}`,background:filled?color:"transparent",boxShadow:filled?`0 0 6px ${color}66`:"none",cursor:"pointer",padding:0}}/>;
+    })}
+  </div>;
+}
+
+function StatRow({label,current,max,onDec,onInc,dotsColor,onDotChange}){
+  return <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 0",borderBottom:`1px solid ${HAIRLINE}`}}>
+    <span style={{...bodyFont,fontSize:12,letterSpacing:.5,color:MUTED,textTransform:"uppercase",minWidth:80}}>{label}</span>
+    {dotsColor ? <Dots current={current} max={max} color={dotsColor} onChange={onDotChange}/> :
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <button onClick={onDec} style={btnGhost}>−</button>
+        <span style={{...monoFont,fontSize:16,color:PARCH,minWidth:54,textAlign:"center"}}>{current}/{max}</span>
+        <button onClick={onInc} style={btnGhost}>+</button>
+      </div>}
+  </div>;
+}
+
+function Seal({children,color=RED}){
+  return <div style={{width:30,height:30,borderRadius:6,border:`1.5px solid ${color}`,color,display:"flex",alignItems:"center",justifyContent:"center",...displayFont,fontSize:13,flexShrink:0,background:`${color}14`}}>{children}</div>;
+}
+
+function ActionCard({seal,sealColor,title,mechanics,detail,tone=GOLD}){
+  const [open,setOpen]=useState(false);
+  return <div style={{background:PANEL2,border:`1px solid ${HAIRLINE}`,borderRadius:12,padding:14,marginBottom:10}}>
+    <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+      <Seal color={sealColor}>{seal}</Seal>
+      <div style={{flex:1}}>
+        <div style={{...displayFont,fontSize:16,color:PARCH,marginBottom:4}}>{title}</div>
+        {mechanics && <div style={{...monoFont,fontSize:13,color:tone}}>{mechanics}</div>}
+      </div>
+    </div>
+    {detail && <button onClick={()=>setOpen(!open)} style={{display:"flex",alignItems:"center",gap:4,marginTop:8,background:"none",border:"none",cursor:"pointer",padding:0}}>
+      <span style={{...bodyFont,fontSize:11,color:MUTED}}>ⓘ {open?"hide rule":"why / full rule"}</span>
+    </button>}
+    {open && <div style={{...bodyFont,fontSize:12.5,color:MUTED,marginTop:8,lineHeight:1.5,borderTop:`1px solid ${HAIRLINE}`,paddingTop:8,whiteSpace:"pre-line"}}>{detail}</div>}
+  </div>;
+}
+
+function OptionButton({label,sub,onClick,tone}){
+  return <button onClick={onClick} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:PANEL2,border:`1px solid ${tone?tone+"55":HAIRLINE}`,borderRadius:12,padding:"14px 16px",marginBottom:10,cursor:"pointer",textAlign:"left"}}>
+    <div>
+      <div style={{...bodyFont,fontSize:15,color:PARCH,fontWeight:500}}>{label}</div>
+      {sub && <div style={{...bodyFont,fontSize:12,color:MUTED,marginTop:2}}>{sub}</div>}
+    </div>
+    <span style={{color:MUTED}}>›</span>
+  </button>;
+}
+
+function Header({title,onBack}){
+  return <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+    {onBack && <button onClick={onBack} style={{...btnGhost,width:30,height:30}}>←</button>}
+    <div style={{...displayFont,fontSize:19,color:PARCH}}>{title}</div>
+  </div>;
+}
+
+const ABILITY_NAMES=["STR","DEX","CON","INT","WIS","CHA"];
+
+function SavesScreen({saves,activeId,onBack,onSwitch,onCreate,onRename,onDelete}){
+  const [testResult,setTestResult]=useState(null);
+  const runTest=()=>{
+    const probe=`probe-${Date.now()}`;
+    const ok=lsSet("katsebushiStandalone:__probe",probe);
+    const back=lsGet("katsebushiStandalone:__probe");
+    setTestResult(ok && back===probe ? "✅ storage confirmed working" : "❌ storage unavailable in this browser");
+  };
+  return <div>
+    <Header title="Save States" onBack={onBack}/>
+    <div style={{...bodyFont,fontSize:12,color:MUTED,marginBottom:10}}>Snapshots of Katsebushi's full state. Load one to jump back, or branch off before a risky choice.</div>
+    <button onClick={runTest} style={{...bodyFont,fontSize:11,color:BLUE,background:"none",border:`1px solid ${BLUE}55`,borderRadius:8,padding:"6px 10px",cursor:"pointer",marginBottom:8}}>Test Storage Now</button>
+    {testResult && <div style={{...monoFont,fontSize:11,color:testResult.startsWith("✅")?JADE:RED,marginBottom:14}}>{testResult}</div>}
+    {saves.slice().sort((a,b)=>b.updatedAt-a.updatedAt).map(s=>{
+      const isActive=s.id===activeId;
+      return <div key={s.id} style={{background:PANEL2,border:`1px solid ${isActive?GOLD:HAIRLINE}`,borderRadius:12,padding:12,marginBottom:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          {isActive && <span style={{color:GOLD}}>✓</span>}
+          <span style={{...displayFont,fontSize:15,color:isActive?GOLD:PARCH}}>{s.name}</span>
+        </div>
+        <div style={{...bodyFont,fontSize:11,color:MUTED,marginTop:2}}>Level {s.level} · {timeAgo(s.updatedAt)}</div>
+        <div style={{display:"flex",gap:8,marginTop:10}}>
+          {!isActive && <button onClick={()=>onSwitch(s.id)} style={{flex:1,background:GOLD,border:"none",borderRadius:8,padding:"8px 0",color:INK,...bodyFont,fontSize:12,fontWeight:600,cursor:"pointer"}}>Load</button>}
+          <button onClick={()=>{const n=prompt("Name for the duplicate:", s.name+" copy"); if(n) onCreate(n, s.id);}} style={{...btnGhost,width:32,height:32}}>⧉</button>
+          <button onClick={()=>{const n=prompt("Rename save:", s.name); if(n) onRename(s.id,n);}} style={{...btnGhost,width:32,height:32}}>✎</button>
+          <button onClick={()=>{if(confirm(`Delete "${s.name}"? This can't be undone.`)) onDelete(s.id);}} style={{...btnGhost,width:32,height:32,borderColor:RED+"55"}}>🗑</button>
+        </div>
+      </div>;
+    })}
+    <button onClick={()=>{const n=prompt("Name this new save state:", "New branch"); if(n) onCreate(n);}} style={{width:"100%",background:PANEL2,border:`1px dashed ${GOLD}66`,borderRadius:12,padding:14,color:GOLD,...displayFont,fontSize:14,cursor:"pointer",marginTop:6}}>+ New Save State (from current)</button>
+  </div>;
+}
+
+function LevelUpFlow({character,setCharacter,onBack}){
+  const nextLevel=character.level+1, info=LEVEL_FEATURES[nextLevel];
+  const [stage,setStage]=useState("preview");
+  const [hitRoll,setHitRoll]=useState("");
+  const [hpGain,setHpGain]=useState(null);
+  const [asiMode,setAsiMode]=useState("plus2");
+  const [plus2Target,setPlus2Target]=useState("WIS");
+  const [plus1Targets,setPlus1Targets]=useState(["DEX","WIS"]);
+  const [featPickId,setFeatPickId]=useState(null);
+  const [featAbilityChoice,setFeatAbilityChoice]=useState(null);
+  const [featName,setFeatName]=useState("");
+
+  if(character.level>=20) return <div><Header title="Level Up" onBack={onBack}/><div style={{...bodyFont,color:MUTED,fontSize:13}}>Already level 20 — the top of the mountain.</div></div>;
+
+  const d = derive(character);
+  const conMod=abilityMod(character.scores.CON);
+  const applyHitDie=()=>{ const r=parseInt(hitRoll,10); if(!r||r<1||r>8) return; setHpGain(r+conMod); setStage(info.choice?"choice":"confirm"); };
+  const availableFeats = Object.keys(FEATS).filter(id => !hasFeat(character,id));
+
+  const featPreview = (id, ability) => {
+    switch(id){
+      case "mobile": return `Speed ${d.speed} → ${d.speed+10} ft`;
+      case "tough": { const add=2*nextLevel; return `Max HP ${character.hp.max} → ${character.hp.max+add} now, +2 every level after`; }
+      case "resilient": return ability ? `${ability} ${character.scores[ability]} → ${Math.min(20,character.scores[ability]+1)}, plus proficiency in ${ability} saves` : "Pick an ability below";
+      case "crusher": return ability ? `${ability} ${character.scores[ability]} → ${Math.min(20,character.scores[ability]+1)}` : "Pick an ability below";
+      case "skillExpert": return ability ? `${ability} ${character.scores[ability]} → ${Math.min(20,character.scores[ability]+1)}` : "Pick an ability below";
+      case "observant": return ability ? `${ability} ${character.scores[ability]} → ${Math.min(20,character.scores[ability]+1)}, Passive Perception ${d.passivePerception} → ${d.passivePerception+5}` : "Pick an ability below";
+      default: return "";
+    }
+  };
+
+  const finalize=()=>{
+    let scores={...character.scores}, feats=[...character.feats];
+    let extraHp=0;
+    if(info.choice==="asi"){
+      if(asiMode==="plus2") scores[plus2Target]=Math.min(20,scores[plus2Target]+2);
+      else if(asiMode==="plus1x2") plus1Targets.forEach(a=>{scores[a]=Math.min(20,scores[a]+1);});
+      else if(asiMode==="feat"){
+        if(featPickId==="custom"){ if(featName.trim()) feats.push({id:"custom",name:featName.trim()}); }
+        else if(featPickId){
+          const def=FEATS[featPickId];
+          const entry={id:featPickId,name:def.name};
+          if(def.chooseAbility && featAbilityChoice){ entry.abilityChosen=featAbilityChoice; scores[featAbilityChoice]=Math.min(20,scores[featAbilityChoice]+1); }
+          feats.push(entry);
+          if(featPickId==="tough") extraHp += 2*nextLevel;
+        }
+      }
+    } else if(info.choice==="epicBoon" && featName.trim()) feats.push({id:"epicBoon",name:`Epic Boon: ${featName.trim()}`});
+    if(nextLevel===20){ scores.DEX=Math.min(25,scores.DEX+4); scores.WIS=Math.min(25,scores.WIS+4); }
+    if(hasFeat(character,"tough")) extraHp += 2;
+    const totalGain=(hpGain||0)+extraHp;
+    const hp={max:character.hp.max+totalGain, current:character.hp.current+totalGain};
+    setCharacter({...character, level:nextLevel, scores, feats, hp, focusCurrent:focusMax(nextLevel), wobCurrent:wobMax(abilityMod(scores.WIS))});
+    setStage("done");
+  };
+
+  return <div>
+    <Header title={`Level ${character.level} → ${nextLevel}`} onBack={onBack}/>
+    {stage==="preview" && <div>
+      <div style={{...bodyFont,fontSize:12,color:MUTED,marginBottom:10}}>What you gain at level {nextLevel}:</div>
+      {(info.auto||[]).map((f,i)=><ActionCard key={i} seal="+" sealColor={JADE} title={f.name} detail={f.detail}/>)}
+      {info.choice==="asi" && <ActionCard seal="?" sealColor={GOLD} title="Ability Score Improvement" mechanics="Choose: +2 one ability, +1 two abilities, or a Feat" tone={GOLD}/>}
+      {info.choice==="epicBoon" && <ActionCard seal="?" sealColor={GOLD} title="Epic Boon" mechanics="Choose an Epic Boon feat (book suggests Boon of Irresistible Offense)" tone={GOLD}/>}
+      <div style={{...bodyFont,fontSize:12,color:MUTED,margin:"14px 0 6px"}}>Roll your Hit Die (1d8) physically, then enter the result:</div>
+      <div style={{display:"flex",gap:8}}>
+        <input value={hitRoll} onChange={e=>setHitRoll(e.target.value.replace(/[^0-9]/g,""))} placeholder="1-8" style={{...monoFont,width:70,background:PANEL2,border:`1px solid ${HAIRLINE}`,borderRadius:8,padding:"10px 12px",color:PARCH,fontSize:16}}/>
+        <button onClick={applyHitDie} style={{flex:1,background:GOLD,border:"none",borderRadius:8,color:INK,...displayFont,fontSize:14,cursor:"pointer"}}>Confirm Roll (+{conMod} CON)</button>
+      </div>
+    </div>}
+    {stage==="choice" && info.choice==="asi" && <div>
+      <ActionCard seal="+" sealColor={JADE} title="Hit Points" mechanics={`+${hpGain} HP`}/>
+      <div style={{...displayFont,fontSize:15,color:PARCH,margin:"10px 0"}}>Ability Score Improvement</div>
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        {[["plus2","+2 one score"],["plus1x2","+1 to two"],["feat","Take a feat"]].map(([m,l])=>
+          <button key={m} onClick={()=>setAsiMode(m)} style={{flex:1,padding:"8px 6px",borderRadius:8,border:`1px solid ${asiMode===m?GOLD:HAIRLINE}`,background:asiMode===m?`${GOLD}22`:PANEL2,color:asiMode===m?GOLD:MUTED,...bodyFont,fontSize:11.5,cursor:"pointer"}}>{l}</button>
+        )}
+      </div>
+      {asiMode==="plus2" && <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:12}}>
+        {ABILITY_NAMES.map(a=><button key={a} onClick={()=>setPlus2Target(a)} disabled={character.scores[a]>=20} style={{padding:"10px 4px",borderRadius:8,border:`1px solid ${plus2Target===a?GOLD:HAIRLINE}`,background:plus2Target===a?`${GOLD}22`:PANEL2,opacity:character.scores[a]>=20?0.4:1,color:plus2Target===a?GOLD:PARCH,...monoFont,fontSize:12,cursor:"pointer"}}>{a} {character.scores[a]}→{Math.min(20,character.scores[a]+2)}</button>)}
+      </div>}
+      {asiMode==="plus1x2" && <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:12}}>
+        {ABILITY_NAMES.map(a=>{ const picked=plus1Targets.includes(a);
+          return <button key={a} disabled={character.scores[a]>=20} onClick={()=>{ if(picked) setPlus1Targets(plus1Targets.filter(x=>x!==a)); else if(plus1Targets.length<2) setPlus1Targets([...plus1Targets,a]); else setPlus1Targets([plus1Targets[1],a]); }} style={{padding:"10px 4px",borderRadius:8,border:`1px solid ${picked?GOLD:HAIRLINE}`,background:picked?`${GOLD}22`:PANEL2,opacity:character.scores[a]>=20?0.4:1,color:picked?GOLD:PARCH,...monoFont,fontSize:12,cursor:"pointer"}}>{a} {character.scores[a]}→{picked?character.scores[a]+1:character.scores[a]}</button>;
+        })}
+      </div>}
+      {asiMode==="feat" && <div style={{marginBottom:12}}>
+        {availableFeats.map(id=>{
+          const def=FEATS[id], picked=featPickId===id;
+          return <div key={id} style={{marginBottom:8}}>
+            <button onClick={()=>{setFeatPickId(id); setFeatAbilityChoice(null);}} style={{width:"100%",textAlign:"left",padding:"10px 12px",borderRadius:10,border:`1px solid ${picked?GOLD:HAIRLINE}`,background:picked?`${GOLD}18`:PANEL2,cursor:"pointer"}}>
+              <div style={{...displayFont,fontSize:14,color:picked?GOLD:PARCH}}>{def.name}</div>
+              <div style={{...bodyFont,fontSize:11,color:MUTED,marginTop:2}}>{def.summary}</div>
+            </button>
+            {picked && def.chooseAbility && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6,marginLeft:8}}>
+              {def.chooseAbility.map(a=><button key={a} onClick={()=>setFeatAbilityChoice(a)} disabled={character.scores[a]>=20} style={{padding:"6px 10px",borderRadius:8,border:`1px solid ${featAbilityChoice===a?GOLD:HAIRLINE}`,background:featAbilityChoice===a?`${GOLD}22`:PANEL2,opacity:character.scores[a]>=20?0.4:1,color:featAbilityChoice===a?GOLD:PARCH,...monoFont,fontSize:11,cursor:"pointer"}}>{a}</button>)}
+            </div>}
+            {picked && <div style={{...monoFont,fontSize:11.5,color:GOLD,marginTop:6,marginLeft:8}}>{featPreview(id, featAbilityChoice)}</div>}
+          </div>;
+        })}
+        <div style={{marginBottom:8}}>
+          <button onClick={()=>{setFeatPickId("custom"); setFeatAbilityChoice(null);}} style={{width:"100%",textAlign:"left",padding:"10px 12px",borderRadius:10,border:`1px solid ${featPickId==="custom"?GOLD:HAIRLINE}`,background:featPickId==="custom"?`${GOLD}18`:PANEL2,cursor:"pointer"}}>
+            <div style={{...displayFont,fontSize:14,color:featPickId==="custom"?GOLD:PARCH}}>Other feat (not in this list)</div>
+            <div style={{...bodyFont,fontSize:11,color:MUTED,marginTop:2}}>Name it — no automatic math applied, just tracked for reference.</div>
+          </button>
+          {featPickId==="custom" && <input value={featName} onChange={e=>setFeatName(e.target.value)} placeholder="Feat name (e.g. Tavern Brawler)" style={{...bodyFont,width:"100%",background:PANEL2,border:`1px solid ${HAIRLINE}`,borderRadius:8,padding:12,color:PARCH,fontSize:14,marginTop:6}}/>}
+        </div>
+      </div>}
+      <button onClick={finalize} style={{width:"100%",background:GOLD,border:"none",borderRadius:12,padding:14,color:INK,...displayFont,fontSize:15,cursor:"pointer"}}>Confirm Level {nextLevel}</button>
+    </div>}
+    {stage==="choice" && info.choice==="epicBoon" && <div>
+      <ActionCard seal="+" sealColor={JADE} title="Hit Points" mechanics={`+${hpGain} HP`}/>
+      <div style={{...displayFont,fontSize:15,color:PARCH,margin:"10px 0"}}>Epic Boon</div>
+      <input value={featName} onChange={e=>setFeatName(e.target.value)} placeholder="e.g. Boon of Irresistible Offense" style={{...bodyFont,width:"100%",background:PANEL2,border:`1px solid ${HAIRLINE}`,borderRadius:8,padding:12,color:PARCH,fontSize:14,marginBottom:4}}/>
+      <div style={{...bodyFont,fontSize:11,color:MUTED,marginBottom:12}}>The book suggests Boon of Irresistible Offense for Monks.</div>
+      <button onClick={finalize} style={{width:"100%",background:GOLD,border:"none",borderRadius:12,padding:14,color:INK,...displayFont,fontSize:15,cursor:"pointer"}}>Confirm Level {nextLevel}</button>
+    </div>}
+    {stage==="confirm" && !info.choice && <div>
+      <ActionCard seal="+" sealColor={JADE} title="Hit Points" mechanics={`+${hpGain} HP`}/>
+      <button onClick={finalize} style={{width:"100%",background:GOLD,border:"none",borderRadius:12,padding:14,color:INK,...displayFont,fontSize:15,cursor:"pointer"}}>Confirm Level {nextLevel}</button>
+    </div>}
+    {stage==="done" && <div style={{textAlign:"center",padding:"20px 0"}}>
+      <div style={{fontSize:28,marginBottom:8}}>★</div>
+      <div style={{...displayFont,fontSize:18,color:PARCH,marginBottom:6}}>Now Level {nextLevel}</div>
+      <div style={{...bodyFont,fontSize:12,color:MUTED,marginBottom:16}}>Stats recalculated. Focus Points and Wholeness uses refreshed.</div>
+      <button onClick={onBack} style={{background:PANEL2,border:`1px solid ${HAIRLINE}`,borderRadius:10,padding:"10px 20px",color:PARCH,...bodyFont,fontSize:13,cursor:"pointer"}}>Back Home</button>
+    </div>}
+  </div>;
+}
+
+function Timeline({character,onBack}){
+  return <div>
+    <Header title="Level Timeline" onBack={onBack}/>
+    <div style={{background:PANEL2,border:`1px solid ${HAIRLINE}`,borderRadius:12,padding:12,marginBottom:14}}>
+      <div style={{...bodyFont,fontSize:11,color:MUTED,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Feats Taken</div>
+      {(character.feats||[]).map((f,i)=>{
+        const label = typeof f==="string" ? f : f.name + (f.abilityChosen ? ` (${f.abilityChosen})` : "");
+        return <div key={i} style={{...bodyFont,fontSize:13,color:PARCH}}>· {label}</div>;
+      })}
+    </div>
+    {Object.entries(LEVEL_FEATURES).map(([lvl,info])=>{
+      const owned=Number(lvl)<=character.level;
+      return <div key={lvl} style={{opacity:owned?1:0.45,marginBottom:12,paddingBottom:10,borderBottom:`1px solid ${HAIRLINE}`}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+          <span style={{...displayFont,fontSize:14,color:owned?GOLD:MUTED}}>Lvl {lvl}</span>
+          {info.choice && <span style={{...bodyFont,fontSize:10,color:BLUE,border:`1px solid ${BLUE}55`,borderRadius:6,padding:"1px 6px"}}>{info.choice==="asi"?"ASI / Feat":"Epic Boon"}</span>}
+        </div>
+        {(info.auto||[]).map((f,i)=><div key={i} style={{...bodyFont,fontSize:12.5,color:owned?PARCH:MUTED}}>· {f.name}</div>)}
+      </div>;
+    })}
+  </div>;
+}
+
+function App(){
+  const {index,activeId,character,ready,setCharacter,switchTo,createSave,renameSave,deleteSave}=useSaveSystem();
+  const [screen,setScreen]=useState("home");
+  if(!ready) return <div style={{minHeight:"100vh",background:INK,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{...bodyFont,color:MUTED,fontSize:13}}>Loading…</span></div>;
+
+  const d=derive(character), nav=s=>setScreen(s);
+  const activeSave=index.find(s=>s.id===activeId);
+  const setHp = hp => setCharacter({...character, hp});
+  const setFocus = n => setCharacter({...character, focusCurrent:Math.max(0,Math.min(d.focusMaxVal,n))});
+  const setWob = n => setCharacter({...character, wobCurrent:Math.max(0,Math.min(d.wobUses,n))});
+
+  const doWoB=()=>{ if(character.wobCurrent>0){ const roll=Math.floor(Math.random()*d.die)+1, healed=Math.max(1,roll+d.mod.WIS);
+    setCharacter({...character, wobCurrent:character.wobCurrent-1, hp:{...character.hp, current:Math.min(character.hp.max,character.hp.current+healed)}});
+    return {roll,healed}; } return null; };
+  const doUncanny=()=>{ const roll=Math.floor(Math.random()*d.die)+1, healed=roll+character.level;
+    setCharacter({...character, focusCurrent:d.focusMaxVal, hp:{...character.hp, current:Math.min(character.hp.max,character.hp.current+healed)}});
+    return {roll,healed}; };
+  const handleCreateSave=(name,sourceId)=>{ if(!name) return;
+    let source=character;
+    if(sourceId){ const s=lsGet(saveDataKey(sourceId)); if(s) source=s; }
+    createSave(name, source);
+  };
+
+  return <div style={{minHeight:"100vh",background:INK,padding:"18px 14px 40px",...bodyFont}}>
+    <div style={{textAlign:"center",marginBottom:4}}>
+      <div style={{...displayFont,fontSize:24,color:PARCH,letterSpacing:1}}>Katsebushi <span style={{color:MUTED,fontSize:18}}>無刀土</span></div>
+      <div style={{...bodyFont,fontSize:12,color:MUTED,textTransform:"uppercase",letterSpacing:2}}>Shadow Warrior · Monk {character.level} · Open Hand</div>
+    </div>
+    <div style={{textAlign:"center",marginBottom:12}}>
+      <button onClick={()=>nav("saves")} style={{...bodyFont,fontSize:11,color:GOLD,background:"none",border:"none",cursor:"pointer"}}>💾 {activeSave?activeSave.name:"Save State"}</button>
+    </div>
+
+    <div style={{background:PANEL,border:`1px solid ${HAIRLINE}`,borderRadius:14,padding:"10px 14px",marginBottom:16}}>
+      <StatRow label="HP" current={character.hp.current} max={character.hp.max}
+        onDec={()=>setHp({...character.hp, current:Math.max(0,character.hp.current-1)})}
+        onInc={()=>setHp({...character.hp, current:Math.min(character.hp.max,character.hp.current+1)})}/>
+      <StatRow label="Focus" current={character.focusCurrent} max={d.focusMaxVal} dotsColor={GOLD} onDotChange={setFocus}/>
+      <StatRow label="Wholeness" current={character.wobCurrent} max={d.wobUses} dotsColor={JADE} onDotChange={setWob}/>
+      <div style={{display:"flex",justifyContent:"space-between",paddingTop:8,...monoFont,fontSize:11,color:MUTED}}>
+        <span>AC {d.ac}</span><span>Speed {d.speed}ft</span><span>Atk +{d.atkBonus}</span><span>Prof +{d.prof}</span>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",paddingTop:4,...monoFont,fontSize:11,color:MUTED}}>
+        <span>Init +{d.initiative}</span><span>Perc {d.passivePerception}</span><span>Grapple DC {d.grappleDC}</span><span>Save DC {d.stunDC}</span>
+      </div>
+      <div style={{paddingTop:6,display:"flex",justifyContent:"flex-end"}}>
+        <button onClick={()=>{ const m=prompt("Set max HP", character.hp.max); const c=prompt("Set current HP", character.hp.current); if(m) setHp({current:c?parseInt(c):character.hp.current, max:parseInt(m)}); }} style={{...bodyFont,fontSize:11,color:MUTED,background:"none",border:"none",cursor:"pointer"}}>edit HP</button>
+      </div>
+    </div>
+
+    {screen==="home" && <div>
+      <OptionButton label="My Turn" sub="What do I do this round?" onClick={()=>nav("turn-root")}/>
+      <OptionButton label="I Got Hit" sub="Deflect Attacks (reaction)" onClick={()=>nav("deflect")}/>
+      <OptionButton label="I'm Falling" sub="Slow Fall (reaction)" onClick={()=>nav("slowfall")}/>
+      <OptionButton label="Rolling Initiative" sub="Uncanny Metabolism" onClick={()=>nav("initiative")}/>
+      <OptionButton label="Short / Long Rest" sub="Reset resources" onClick={()=>nav("rest")}/>
+      <div style={{height:8}}/>
+      <OptionButton label="Level Up" tone={GOLD} sub={`Currently level ${character.level} → ${character.level<20?character.level+1:"max"}`} onClick={()=>nav("levelup")}/>
+      <OptionButton label="Level Timeline" sub="Everything gained 1–20, at a glance" onClick={()=>nav("timeline")}/>
+      <OptionButton label="Save States" tone={JADE} sub={`${index.length} snapshot${index.length===1?"":"s"} · active: ${activeSave?activeSave.name:"—"}`} onClick={()=>nav("saves")}/>
+    </div>}
+
+    {screen==="saves" && <SavesScreen saves={index} activeId={activeId} onBack={()=>nav("home")} onSwitch={id=>{switchTo(id); nav("home");}} onCreate={handleCreateSave} onRename={renameSave} onDelete={deleteSave}/>}
+    {screen==="levelup" && <LevelUpFlow character={character} setCharacter={setCharacter} onBack={()=>nav("home")}/>}
+    {screen==="timeline" && <Timeline character={character} onBack={()=>nav("home")}/>}
+
+    {screen==="turn-root" && <div>
+      <Header title="My Turn" onBack={()=>nav("home")}/>
+      <div style={{...bodyFont,fontSize:12,color:MUTED,marginBottom:12}}>Action + Bonus Action + (once/turn) Stunning Strike on a hit.</div>
+      <OptionButton label="Priority target — control it" sub="Grapple + Topple combo, or Push it away" onClick={()=>nav("turn-control")}/>
+      <OptionButton label="Priority target — stun it" sub="Shut down its whole turn" onClick={()=>nav("turn-stun")}/>
+      <OptionButton label="Flurry of Blows" sub="Spend 1 Focus Point for extra strikes" onClick={()=>nav("turn-flurry")}/>
+      <OptionButton label="Normal fight — conserve resources" sub="Free 3-attack rotation, no Focus spent" onClick={()=>nav("turn-free")}/>
+      <OptionButton label="I need to heal now" sub="Wholeness of Body (bonus action)" onClick={()=>nav("turn-heal")}/>
+      <OptionButton label="I need to escape / reposition" sub="Patient Defense or Step of the Wind" onClick={()=>nav("turn-move")}/>
+      {character.level>=17 && <OptionButton label="Set up Quivering Palm" sub="4 Focus Points, save-or-die follow-up" onClick={()=>nav("turn-palm")}/>}
+      {character.level>=18 && <OptionButton label="Superior Defense" sub="3 Focus Points — resist all but Force, 1 min" onClick={()=>nav("turn-superior")}/>}
+    </div>}
+
+    {screen==="turn-free" && <div>
+      <Header title="Free 3-Attack Rotation" onBack={()=>nav("turn-root")}/>
+      <ActionCard seal="1" title="Attack Action: 2 Unarmed Strikes" mechanics={`+${d.atkBonus} to hit, ${d.unarmedDmg} each`} detail="Extra Attack — no resources spent."/>
+      <ActionCard seal="2" title="Bonus Action: 1 more Unarmed Strike" mechanics={`+${d.atkBonus} to hit, ${d.unarmedDmg}, free`} detail="Martial Arts' Bonus Unarmed Strike — free."/>
+      <ActionCard seal="?" title="Any hit lands — spend Stun?" tone={GOLD} mechanics={`1 Focus Point → CON save DC ${d.stunDC}`} detail="Once per turn. Fail = Stunned until your next turn. Success = speed halved, next attack against it has advantage."/>
+      {d.hasCrusher && <ActionCard seal="★" title="Crusher feat is active" tone={GOLD} mechanics="Once/turn on this Bludgeoning hit: move it 5ft or gain advantage vs it" detail="Your Unarmed Strikes count as Bludgeoning unless you're using Empowered Strikes' Force option."/>}
+    </div>}
+
+    {screen==="turn-flurry" && <div>
+      <Header title="Flurry of Blows" onBack={()=>nav("turn-root")}/>
+      <ActionCard seal="B" title="Bonus Action: Flurry of Blows" tone={GOLD} mechanics={`1 Focus Point → ${d.flurryStrikes} Unarmed Strikes, +${d.atkBonus} to hit, ${d.unarmedDmg} each`} detail={d.flurryStrikes===3?"Heightened Focus (lvl 10+) upgraded this from 2 to 3 strikes.":"2 strikes for 1 Focus Point. Becomes 3 strikes at level 10 (Heightened Focus)."}/>
+      <div style={{...bodyFont,fontSize:12,color:MUTED,margin:"12px 0 8px"}}>On any Flurry hit, choose one Open Hand Technique (free):</div>
+      <ActionCard seal="T" title="Topple" tone={JADE} mechanics={`DEX save DC ${d.stunDC} or Prone`} detail="Best combined with Grapple (see 'Control it') — Grappled + Prone locks a target down hard."/>
+      <ActionCard seal="A" title="Addle" tone={JADE} mechanics="No saving throw — automatic" detail="Target can't make Opportunity Attacks until the start of its next turn. Great for peeling off a dangerous melee target before you or an ally disengages."/>
+      <ActionCard seal="P" title="Push" tone={JADE} mechanics={`STR save DC ${d.stunDC} or pushed 15 ft`} detail="Good for shoving something off a ledge or out of a doorway. Note: pushing a creature you're also Grappling will usually break your own grapple unless you have a feature that says otherwise."/>
+      {d.hasGrappler && <ActionCard seal="★" title="Grappler feat is active" tone={GOLD} mechanics="Advantage on these attacks vs a target you're Grappling" detail="If you grappled the target this turn (see 'Control it'), every Flurry strike against it — including the Topple attempt — has advantage."/>}
+    </div>}
+
+    {screen==="turn-control" && <div>
+      <Header title="Control It — Grapple + Topple" onBack={()=>nav("turn-root")}/>
+      <div style={{...bodyFont,fontSize:12,color:MUTED,marginBottom:10}}>The full lock-down combo: pin it in place, then knock it down.</div>
+      <ActionCard seal="1" title="Attack Action, Strike 1 — Grapple" mechanics={`Hit +${d.atkBonus} → target STR/DEX save DC ${d.grappleDC} or Grappled`} detail="2024 rule: Grapple is now a choice on a hit, instead of dealing damage. It uses your attack's own ability (DEX, via Dexterous Attacks) for the DC — not your Wisdom-based monk DC."/>
+      <ActionCard seal="2" title="Attack Action, Strike 2 — damage or 2nd Grapple/Shove" mechanics={`+${d.atkBonus} to hit, ${d.unarmedDmg}`} detail="From Extra Attack. Use it for normal damage, or Shove the same or a different target (same DC)."/>
+      <ActionCard seal="3" title="Bonus Action: Flurry of Blows" tone={GOLD} mechanics={`1 Focus Point → ${d.flurryStrikes} more Unarmed Strikes`}/>
+      <ActionCard seal="4" title="On a Flurry hit vs the grappled target — Topple" tone={JADE} mechanics={`DEX save DC ${d.stunDC} or Prone`} detail="Now the target is both Grappled (can't move away) and Prone (melee attacks against it have advantage, including yours). This is the full combo in one turn."/>
+      {d.hasGrappler && <ActionCard seal="★" title="Grappler feat is active" tone={GOLD} mechanics="Advantage on all attacks vs this grappled target" detail="Every strike above against the target you're grappling — including the Topple attempt — already has advantage from the feat."/>}
+      <div style={{...bodyFont,fontSize:12,color:MUTED,margin:"14px 0 8px"}}>Prefer a different Open Hand effect instead of Topple?</div>
+      <ActionCard seal="P" title="Push instead" mechanics={`STR save DC ${d.stunDC} or pushed 15 ft`} detail="Note: pushing a target you're Grappling typically breaks the grapple (it moves out of your reach) — use Push OR Grapple+Topple, not usually both on the same target."/>
+      <ActionCard seal="A" title="Addle instead" mechanics="No save — automatic" detail="No Opportunity Attacks from the target until the start of its next turn. Useful if you need to walk away from it safely instead of holding it down."/>
+    </div>}
+
+    {screen==="turn-stun" && <div>
+      <Header title="Stun Lock" onBack={()=>nav("turn-root")}/>
+      <ActionCard seal="1" title="Attack Action: 2 Unarmed Strikes" mechanics={`+${d.atkBonus} to hit, ${d.unarmedDmg} each`}/>
+      <ActionCard seal="!" title="First hit lands — Stunning Strike" tone={GOLD} mechanics={`1 Focus Point → CON save DC ${d.stunDC}`} detail="Fail = Stunned until your next turn. Highest-impact single Focus Point spend."/>
+      <ActionCard seal="2" title="Bonus Action: 1 more Unarmed Strike" mechanics={`+${d.atkBonus} to hit, ${d.unarmedDmg}, free`}/>
+    </div>}
+    {screen==="turn-heal" && <div>
+      <Header title="Wholeness of Body" onBack={()=>nav("turn-root")}/>
+      <ActionCard seal="♥" title={`Uses left: ${character.wobCurrent} / ${d.wobUses}`} tone={JADE} mechanics={`Bonus Action → heal ${d.wobHeal}`}/>
+      <button onClick={()=>{ const r=doWoB(); if(r) alert(`Rolled ${r.roll} → healed ${r.healed} HP`); else alert("No Wholeness of Body uses left."); }} style={{width:"100%",background:JADE,border:"none",borderRadius:12,padding:14,color:INK,...displayFont,fontSize:15,cursor:"pointer"}}>Use Wholeness of Body</button>
+    </div>}
+    {screen==="turn-move" && <div>
+      <Header title="Reposition / Escape" onBack={()=>nav("turn-root")}/>
+      <ActionCard seal="○" title="Free version (no Focus Point)" tone={MUTED} mechanics="Bonus Action: Disengage OR Dash"/>
+      <ActionCard seal="1" title="Upgraded (1 Focus Point)" tone={GOLD} mechanics={character.level>=10?"Disengage+Dodge (+temp HP), or Disengage+Dash x2 jump":"Disengage+Dodge, or Disengage+Dash, jump x2"}/>
+      {d.hasMobile && <ActionCard seal="★" title="Mobile feat is active" tone={GOLD} mechanics={`Speed already includes +10ft (${d.speed}ft total)`} detail="You also don't provoke an Opportunity Attack from a creature you just attacked in melee this turn, and difficult terrain doesn't slow your Dash."/>}
+    </div>}
+    {screen==="turn-palm" && <div><Header title="Quivering Palm" onBack={()=>nav("turn-root")}/>
+      <ActionCard seal="4" title="On an Unarmed Strike hit" tone={GOLD} mechanics="Spend 4 Focus Points to set vibrations" detail={`Lasts ${character.level} days. Ending them (or forgoing an attack) forces CON save: 10d12 Force damage on fail, half on success.`}/>
+    </div>}
+    {screen==="turn-superior" && <div><Header title="Superior Defense" onBack={()=>nav("turn-root")}/>
+      <ActionCard seal="3" title="Start of your turn" tone={GOLD} mechanics="Spend 3 Focus Points" detail="Resistance to all damage except Force, 1 minute or until Incapacitated."/>
+    </div>}
+    {screen==="deflect" && <div><Header title="Deflect Attacks" onBack={()=>nav("home")}/>
+      <ActionCard seal="R" title="Reaction — always free" tone={JADE} mechanics={`Reduce damage by ${d.deflectFormula}`} detail={d.deflectAnyType?"Deflect Energy (lvl 13+): any damage type now.":"Only Bludgeoning/Piercing/Slashing."}/>
+      <ActionCard seal="1" title="If reduced to 0 — redirect" tone={GOLD} mechanics="1 Focus Point → nearby creature takes the same damage"/>
+    </div>}
+    {screen==="slowfall" && <div><Header title="Slow Fall" onBack={()=>nav("home")}/>
+      <ActionCard seal="R" title="Reaction — always free" tone={JADE} mechanics={`Reduce fall damage by ${d.slowFall}`}/>
+    </div>}
+    {screen==="initiative" && <div><Header title="Rolling Initiative" onBack={()=>nav("home")}/>
+      <ActionCard seal="1/day" title="Uncanny Metabolism" tone={GOLD} mechanics={`Refill all Focus Points + heal ${d.uncannyHeal}`}/>
+      <button onClick={()=>{ const r=doUncanny(); alert(`Focus refilled. Rolled ${r.roll} → healed ${r.healed} HP.`); }} style={{width:"100%",background:GOLD,border:"none",borderRadius:12,padding:14,color:INK,...displayFont,fontSize:15,cursor:"pointer"}}>Trigger Uncanny Metabolism</button>
+    </div>}
+    {screen==="rest" && <div><Header title="Rest" onBack={()=>nav("home")}/>
+      <ActionCard seal="S" title="Short or Long Rest" tone={JADE} mechanics="All spent Focus Points return"/>
+      <ActionCard seal="L" title="Long Rest only" tone={JADE} mechanics="Wholeness of Body uses reset · HP fully restored"/>
+      <button onClick={()=>setFocus(d.focusMaxVal)} style={{width:"100%",background:PANEL2,border:`1px solid ${HAIRLINE}`,borderRadius:12,padding:12,color:PARCH,...bodyFont,fontSize:14,cursor:"pointer",marginBottom:10}}>Refill Focus Points</button>
+      <button onClick={()=>{ setWob(d.wobUses); setHp({...character.hp, current:character.hp.max}); }} style={{width:"100%",background:RED,border:"none",borderRadius:12,padding:12,color:PARCH,...bodyFont,fontSize:14,cursor:"pointer"}}>Take a Long Rest (full reset)</button>
+    </div>}
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
