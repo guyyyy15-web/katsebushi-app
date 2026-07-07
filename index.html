@@ -482,6 +482,11 @@ function Timeline({character,setCharacter,onBack}){
 function App(){
   const {index,activeId,character,ready,setCharacter,switchTo,createSave,renameSave,deleteSave}=useSaveSystem();
   const [screen,setScreen]=useState("home");
+  const [hpEditOpen,setHpEditOpen]=useState(false);
+  const [hpEditMax,setHpEditMax]=useState("");
+  const [hpEditCurrent,setHpEditCurrent]=useState("");
+  const [wobResult,setWobResult]=useState(null);
+  const [uncannyResult,setUncannyResult]=useState(null);
   if(!ready) return <div style={{minHeight:"100vh",background:INK,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{...bodyFont,color:MUTED,fontSize:13}}>Loading…</span></div>;
 
   const d=derive(character), nav=s=>setScreen(s);
@@ -491,11 +496,6 @@ function App(){
   const setFocus = n => setCharacter({...character, focusCurrent:Math.max(0,Math.min(d.focusMaxVal,n))});
   const setWob = n => setCharacter({...character, wobCurrent:Math.max(0,Math.min(d.wobUses,n))});
   const setWeapon = patch => setCharacter({...character, weapon:{...(character.weapon||DEFAULT_CHARACTER.weapon), ...patch}});
-  const [hpEditOpen,setHpEditOpen]=useState(false);
-  const [hpEditMax,setHpEditMax]=useState("");
-  const [hpEditCurrent,setHpEditCurrent]=useState("");
-  const [wobResult,setWobResult]=useState(null);
-  const [uncannyResult,setUncannyResult]=useState(null);
 
   const doWoB=()=>{ if(character.wobCurrent>0){ const roll=Math.floor(Math.random()*d.die)+1, healed=Math.max(1,roll+d.mod.WIS);
     setCharacter({...character, wobCurrent:character.wobCurrent-1, hp:{...character.hp, current:Math.min(character.hp.max,character.hp.current+healed)}});
