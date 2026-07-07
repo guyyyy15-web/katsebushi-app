@@ -77,6 +77,8 @@ function derive(c){
     initiative: mod.DEX+(hasAlert?prof:0),
     passivePerception: 10+mod.WIS+prof+(hasObservant?5:0),
     hasMobile, hasAlert, hasGrappler, hasCrusher, hasObservant,
+    weaponAtk: prof+mod.DEX+2,
+    weaponDmg: `1d${die}+${mod.DEX}+2`,
   };
 }
 
@@ -103,7 +105,7 @@ const LEVEL_FEATURES = {
   20:{auto:[{name:"Body and Mind",detail:"DEX and WIS +4 each, max 25. Automatic."}]},
 };
 
-const DEFAULT_CHARACTER = { level:6, scores:{STR:12,DEX:16,CON:13,INT:8,WIS:17,CHA:10}, feats:[{id:"alert",name:"Alert"},{id:"grappler",name:"Grappler"}], hp:{current:41,max:41}, focusCurrent:6, wobCurrent:3 };
+const DEFAULT_CHARACTER = { level:6, scores:{STR:12,DEX:16,CON:13,INT:8,WIS:17,CHA:10}, feats:[{id:"alert",name:"Alert"},{id:"grappler",name:"Grappler"}], hp:{current:41,max:41}, focusCurrent:6, wobCurrent:3, weapon:{form:"staff",dimLight:false,deflectUsed:false} };
 
 /* ---- localStorage-backed save system (standalone version) ---- */
 const IDX_KEY="katsebushiStandalone:saveIndex", ACTIVE_KEY="katsebushiStandalone:activeSaveId";
@@ -153,7 +155,7 @@ function useSaveSystem(){
     const id = newId();
     const data = source ? {...source} : {...DEFAULT_CHARACTER};
     const ok = lsSet(saveDataKey(id), data);
-    if(!ok){ alert("Save failed — storage unavailable."); return null; }
+    if(!ok){ console.error("Save failed — storage unavailable."); return null; }
     const entry = {id, name, level:data.level, updatedAt:Date.now()};
     persistIndex([...index, entry]);
     return id;
@@ -248,6 +250,17 @@ function SavesScreen({saves,activeId,onBack,onSwitch,onCreate,onRename,onDelete}
     const back=lsGet("katsebushiStandalone:__probe");
     setTestResult(ok && back===probe ? "✅ storage confirmed working" : "❌ storage unavailable in this browser");
   };
+  const [renamingId,setRenamingId]=useState(null);
+  const [renameValue,setRenameValue]=useState("");
+  const [duplicatingId,setDuplicatingId]=useState(null);
+  const [duplicateValue,setDuplicateValue]=useState("");
+  const [deletingId,setDeletingId]=useState(null);
+  const [creating,setCreating]=useState(false);
+  const [newSaveValue,setNewSaveValue]=useState("New branch");
+
+  const inputStyle={...bodyFont,width:"100%",background:PANEL,border:`1px solid ${HAIRLINE}`,borderRadius:8,padding:"8px 10px",color:PARCH,fontSize:13,marginBottom:8};
+  const smallBtn=(bg,color)=>({flex:1,background:bg,border:"none",borderRadius:8,padding:"7px 0",color,...bodyFont,fontSize:12,fontWeight:600,cursor:"pointer"});
+
   return <div>
     <Header title="Save States" onBack={onBack}/>
     <div style={{...bodyFont,fontSize:12,color:MUTED,marginBottom:10}}>Snapshots of Katsebushi's full state. Load one to jump back, or branch off before a risky choice.</div>
@@ -255,21 +268,47 @@ function SavesScreen({saves,activeId,onBack,onSwitch,onCreate,onRename,onDelete}
     {testResult && <div style={{...monoFont,fontSize:11,color:testResult.startsWith("✅")?JADE:RED,marginBottom:14}}>{testResult}</div>}
     {saves.slice().sort((a,b)=>b.updatedAt-a.updatedAt).map(s=>{
       const isActive=s.id===activeId;
+      const isRenaming=renamingId===s.id, isDuplicating=duplicatingId===s.id, isDeleting=deletingId===s.id;
       return <div key={s.id} style={{background:PANEL2,border:`1px solid ${isActive?GOLD:HAIRLINE}`,borderRadius:12,padding:12,marginBottom:10}}>
         <div style={{display:"flex",alignItems:"center",gap:6}}>
           {isActive && <span style={{color:GOLD}}>✓</span>}
           <span style={{...displayFont,fontSize:15,color:isActive?GOLD:PARCH}}>{s.name}</span>
         </div>
         <div style={{...bodyFont,fontSize:11,color:MUTED,marginTop:2}}>Level {s.level} · {timeAgo(s.updatedAt)}</div>
-        <div style={{display:"flex",gap:8,marginTop:10}}>
-          {!isActive && <button onClick={()=>onSwitch(s.id)} style={{flex:1,background:GOLD,border:"none",borderRadius:8,padding:"8px 0",color:INK,...bodyFont,fontSize:12,fontWeight:600,cursor:"pointer"}}>Load</button>}
-          <button onClick={()=>{const n=prompt("Name for the duplicate:", s.name+" copy"); if(n) onCreate(n, s.id);}} style={{...btnGhost,width:32,height:32}}>⧉</button>
-          <button onClick={()=>{const n=prompt("Rename save:", s.name); if(n) onRename(s.id,n);}} style={{...btnGhost,width:32,height:32}}>✎</button>
-          <button onClick={()=>{if(confirm(`Delete "${s.name}"? This can't be undone.`)) onDelete(s.id);}} style={{...btnGhost,width:32,height:32,borderColor:RED+"55"}}>🗑</button>
-        </div>
+
+        {isRenaming ? <div style={{marginTop:10}}>
+          <input autoFocus value={renameValue} onChange={e=>setRenameValue(e.target.value)} style={inputStyle}/>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>setRenamingId(null)} style={smallBtn(PANEL,MUTED)}>Cancel</button>
+            <button onClick={()=>{ if(renameValue.trim()) onRename(s.id,renameValue.trim()); setRenamingId(null); }} style={smallBtn(GOLD,INK)}>Save Name</button>
+          </div>
+        </div> : isDuplicating ? <div style={{marginTop:10}}>
+          <input autoFocus value={duplicateValue} onChange={e=>setDuplicateValue(e.target.value)} style={inputStyle}/>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>setDuplicatingId(null)} style={smallBtn(PANEL,MUTED)}>Cancel</button>
+            <button onClick={()=>{ if(duplicateValue.trim()) onCreate(duplicateValue.trim(), s.id); setDuplicatingId(null); }} style={smallBtn(GOLD,INK)}>Create Copy</button>
+          </div>
+        </div> : isDeleting ? <div style={{marginTop:10}}>
+          <div style={{...bodyFont,fontSize:12,color:RED,marginBottom:8}}>Delete "{s.name}"? This can't be undone.</div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>setDeletingId(null)} style={smallBtn(PANEL,MUTED)}>Cancel</button>
+            <button onClick={()=>{ onDelete(s.id); setDeletingId(null); }} style={smallBtn(RED,PARCH)}>Delete</button>
+          </div>
+        </div> : <div style={{display:"flex",gap:8,marginTop:10}}>
+          {!isActive && <button onClick={()=>onSwitch(s.id)} style={smallBtn(GOLD,INK)}>Load</button>}
+          <button onClick={()=>{setDuplicatingId(s.id); setDuplicateValue(s.name+" copy");}} style={{...btnGhost,width:32,height:32}}>⧉</button>
+          <button onClick={()=>{setRenamingId(s.id); setRenameValue(s.name);}} style={{...btnGhost,width:32,height:32}}>✎</button>
+          <button onClick={()=>setDeletingId(s.id)} style={{...btnGhost,width:32,height:32,borderColor:RED+"55"}}>🗑</button>
+        </div>}
       </div>;
     })}
-    <button onClick={()=>{const n=prompt("Name this new save state:", "New branch"); if(n) onCreate(n);}} style={{width:"100%",background:PANEL2,border:`1px dashed ${GOLD}66`,borderRadius:12,padding:14,color:GOLD,...displayFont,fontSize:14,cursor:"pointer",marginTop:6}}>+ New Save State (from current)</button>
+    {creating ? <div style={{background:PANEL2,border:`1px dashed ${GOLD}66`,borderRadius:12,padding:14,marginTop:6}}>
+      <input autoFocus value={newSaveValue} onChange={e=>setNewSaveValue(e.target.value)} style={inputStyle}/>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={()=>setCreating(false)} style={smallBtn(PANEL,MUTED)}>Cancel</button>
+        <button onClick={()=>{ if(newSaveValue.trim()) onCreate(newSaveValue.trim()); setCreating(false); setNewSaveValue("New branch"); }} style={smallBtn(GOLD,INK)}>Create</button>
+      </div>
+    </div> : <button onClick={()=>setCreating(true)} style={{width:"100%",background:PANEL2,border:`1px dashed ${GOLD}66`,borderRadius:12,padding:14,color:GOLD,...displayFont,fontSize:14,cursor:"pointer",marginTop:6}}>+ New Save State (from current)</button>}
   </div>;
 }
 
@@ -402,9 +441,24 @@ function LevelUpFlow({character,setCharacter,onBack}){
   </div>;
 }
 
-function Timeline({character,onBack}){
+function Timeline({character,setCharacter,onBack}){
+  const [override,setOverride]=useState("");
+  const applyOverride=()=>{
+    const n=parseInt(override,10);
+    if(!n||n<1||n>20) return;
+    setCharacter({...character, level:n, focusCurrent:Math.min(character.focusCurrent,focusMax(n)), wobCurrent:Math.min(character.wobCurrent, wobMax(abilityMod(character.scores.WIS)))});
+    setOverride("");
+  };
   return <div>
     <Header title="Level Timeline" onBack={onBack}/>
+    <div style={{background:PANEL2,border:`1px solid ${GOLD}55`,borderRadius:12,padding:12,marginBottom:14}}>
+      <div style={{...bodyFont,fontSize:11,color:MUTED,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Correct The Level (testing / fix drift)</div>
+      <div style={{...bodyFont,fontSize:11,color:MUTED,marginBottom:8}}>Currently level {character.level}. This only changes the level number — it won't undo ability scores, feats, or HP already gained from level-ups you actually took.</div>
+      <div style={{display:"flex",gap:8}}>
+        <input value={override} onChange={e=>setOverride(e.target.value.replace(/[^0-9]/g,""))} placeholder="e.g. 6" style={{...monoFont,width:70,background:PANEL,border:`1px solid ${HAIRLINE}`,borderRadius:8,padding:"8px 10px",color:PARCH,fontSize:14}}/>
+        <button onClick={applyOverride} style={{flex:1,background:GOLD,border:"none",borderRadius:8,color:INK,...bodyFont,fontSize:13,fontWeight:600,cursor:"pointer"}}>Set Level</button>
+      </div>
+    </div>
     <div style={{background:PANEL2,border:`1px solid ${HAIRLINE}`,borderRadius:12,padding:12,marginBottom:14}}>
       <div style={{...bodyFont,fontSize:11,color:MUTED,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Feats Taken</div>
       {(character.feats||[]).map((f,i)=>{
@@ -431,10 +485,17 @@ function App(){
   if(!ready) return <div style={{minHeight:"100vh",background:INK,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{...bodyFont,color:MUTED,fontSize:13}}>Loading…</span></div>;
 
   const d=derive(character), nav=s=>setScreen(s);
+  const weapon = character.weapon || DEFAULT_CHARACTER.weapon;
   const activeSave=index.find(s=>s.id===activeId);
   const setHp = hp => setCharacter({...character, hp});
   const setFocus = n => setCharacter({...character, focusCurrent:Math.max(0,Math.min(d.focusMaxVal,n))});
   const setWob = n => setCharacter({...character, wobCurrent:Math.max(0,Math.min(d.wobUses,n))});
+  const setWeapon = patch => setCharacter({...character, weapon:{...(character.weapon||DEFAULT_CHARACTER.weapon), ...patch}});
+  const [hpEditOpen,setHpEditOpen]=useState(false);
+  const [hpEditMax,setHpEditMax]=useState("");
+  const [hpEditCurrent,setHpEditCurrent]=useState("");
+  const [wobResult,setWobResult]=useState(null);
+  const [uncannyResult,setUncannyResult]=useState(null);
 
   const doWoB=()=>{ if(character.wobCurrent>0){ const roll=Math.floor(Math.random()*d.die)+1, healed=Math.max(1,roll+d.mod.WIS);
     setCharacter({...character, wobCurrent:character.wobCurrent-1, hp:{...character.hp, current:Math.min(character.hp.max,character.hp.current+healed)}});
@@ -469,15 +530,35 @@ function App(){
       <div style={{display:"flex",justifyContent:"space-between",paddingTop:4,...monoFont,fontSize:11,color:MUTED}}>
         <span>Init +{d.initiative}</span><span>Perc {d.passivePerception}</span><span>Grapple DC {d.grappleDC}</span><span>Save DC {d.stunDC}</span>
       </div>
-      <div style={{paddingTop:6,display:"flex",justifyContent:"flex-end"}}>
-        <button onClick={()=>{ const m=prompt("Set max HP", character.hp.max); const c=prompt("Set current HP", character.hp.current); if(m) setHp({current:c?parseInt(c):character.hp.current, max:parseInt(m)}); }} style={{...bodyFont,fontSize:11,color:MUTED,background:"none",border:"none",cursor:"pointer"}}>edit HP</button>
-      </div>
+      {hpEditOpen ? <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${HAIRLINE}`}}>
+        <div style={{display:"flex",gap:8,marginBottom:8}}>
+          <div style={{flex:1}}>
+            <div style={{...bodyFont,fontSize:10,color:MUTED,marginBottom:3}}>MAX HP</div>
+            <input type="number" inputMode="numeric" value={hpEditMax} onChange={e=>setHpEditMax(e.target.value)} style={{...monoFont,width:"100%",background:PANEL2,border:`1px solid ${HAIRLINE}`,borderRadius:8,padding:"8px 10px",color:PARCH,fontSize:14}}/>
+          </div>
+          <div style={{flex:1}}>
+            <div style={{...bodyFont,fontSize:10,color:MUTED,marginBottom:3}}>CURRENT HP</div>
+            <input type="number" inputMode="numeric" value={hpEditCurrent} onChange={e=>setHpEditCurrent(e.target.value)} style={{...monoFont,width:"100%",background:PANEL2,border:`1px solid ${HAIRLINE}`,borderRadius:8,padding:"8px 10px",color:PARCH,fontSize:14}}/>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>setHpEditOpen(false)} style={{flex:1,background:PANEL2,border:`1px solid ${HAIRLINE}`,borderRadius:8,padding:"8px 0",color:MUTED,...bodyFont,fontSize:12,cursor:"pointer"}}>Cancel</button>
+          <button onClick={()=>{ const m=parseInt(hpEditMax,10), c=parseInt(hpEditCurrent,10);
+            if(m>0) setHp({max:m, current:isNaN(c)?Math.min(character.hp.current,m):Math.max(0,Math.min(m,c))});
+            setHpEditOpen(false); }} style={{flex:1,background:GOLD,border:"none",borderRadius:8,padding:"8px 0",color:INK,...bodyFont,fontSize:12,fontWeight:600,cursor:"pointer"}}>Save</button>
+        </div>
+      </div> : (
+        <div style={{paddingTop:6,display:"flex",justifyContent:"flex-end"}}>
+          <button onClick={()=>{ setHpEditMax(String(character.hp.max)); setHpEditCurrent(String(character.hp.current)); setHpEditOpen(true); }} style={{...bodyFont,fontSize:11,color:MUTED,background:"none",border:"none",cursor:"pointer"}}>edit HP</button>
+        </div>
+      )}
     </div>
 
     {screen==="home" && <div>
       <OptionButton label="My Turn" sub="What do I do this round?" onClick={()=>nav("turn-root")}/>
       <OptionButton label="I Got Hit" sub="Deflect Attacks (reaction)" onClick={()=>nav("deflect")}/>
       <OptionButton label="I'm Falling" sub="Slow Fall (reaction)" onClick={()=>nav("slowfall")}/>
+      <OptionButton label="My Weapon" tone={JADE} sub={`Quarterstaff of the Acrobat — currently: ${weapon.form==="staff"?"Staff":weapon.form==="pole"?"10ft Pole":"Rod (stored)"}`} onClick={()=>nav("weapon")}/>
       <OptionButton label="Rolling Initiative" sub="Uncanny Metabolism" onClick={()=>nav("initiative")}/>
       <OptionButton label="Short / Long Rest" sub="Reset resources" onClick={()=>nav("rest")}/>
       <div style={{height:8}}/>
@@ -488,7 +569,7 @@ function App(){
 
     {screen==="saves" && <SavesScreen saves={index} activeId={activeId} onBack={()=>nav("home")} onSwitch={id=>{switchTo(id); nav("home");}} onCreate={handleCreateSave} onRename={renameSave} onDelete={deleteSave}/>}
     {screen==="levelup" && <LevelUpFlow character={character} setCharacter={setCharacter} onBack={()=>nav("home")}/>}
-    {screen==="timeline" && <Timeline character={character} onBack={()=>nav("home")}/>}
+    {screen==="timeline" && <Timeline character={character} setCharacter={setCharacter} onBack={()=>nav("home")}/>}
 
     {screen==="turn-root" && <div>
       <Header title="My Turn" onBack={()=>nav("home")}/>
@@ -543,7 +624,8 @@ function App(){
     {screen==="turn-heal" && <div>
       <Header title="Wholeness of Body" onBack={()=>nav("turn-root")}/>
       <ActionCard seal="♥" title={`Uses left: ${character.wobCurrent} / ${d.wobUses}`} tone={JADE} mechanics={`Bonus Action → heal ${d.wobHeal}`}/>
-      <button onClick={()=>{ const r=doWoB(); if(r) alert(`Rolled ${r.roll} → healed ${r.healed} HP`); else alert("No Wholeness of Body uses left."); }} style={{width:"100%",background:JADE,border:"none",borderRadius:12,padding:14,color:INK,...displayFont,fontSize:15,cursor:"pointer"}}>Use Wholeness of Body</button>
+      <button onClick={()=>{ const r=doWoB(); setWobResult(r ? `Rolled ${r.roll} → healed ${r.healed} HP` : "No Wholeness of Body uses left."); }} style={{width:"100%",background:JADE,border:"none",borderRadius:12,padding:14,color:INK,...displayFont,fontSize:15,cursor:"pointer"}}>Use Wholeness of Body</button>
+      {wobResult && <div style={{...monoFont,fontSize:12,color:JADE,marginTop:10,textAlign:"center"}}>{wobResult}</div>}
     </div>}
     {screen==="turn-move" && <div>
       <Header title="Reposition / Escape" onBack={()=>nav("turn-root")}/>
@@ -564,15 +646,59 @@ function App(){
     {screen==="slowfall" && <div><Header title="Slow Fall" onBack={()=>nav("home")}/>
       <ActionCard seal="R" title="Reaction — always free" tone={JADE} mechanics={`Reduce fall damage by ${d.slowFall}`}/>
     </div>}
+    {screen==="weapon" && <div>
+      <Header title="Quarterstaff of the Acrobat" onBack={()=>nav("home")}/>
+      <div style={{...bodyFont,fontSize:12,color:MUTED,marginBottom:12}}>Very Rare, requires attunement. +2 to attack and damage. As a Monk weapon, use your Martial Arts die and DEX instead of the weapon's own 1d6/STR.</div>
+
+      <div style={{...displayFont,fontSize:14,color:PARCH,marginBottom:8}}>Current Form (Bonus Action to change)</div>
+      <div style={{display:"flex",gap:8,marginBottom:14}}>
+        {[["staff","Quarterstaff"],["pole","10ft Pole"],["rod","6in Rod"]].map(([f,l])=>
+          <button key={f} onClick={()=>setWeapon({form:f})} style={{flex:1,padding:"10px 4px",borderRadius:8,border:`1px solid ${weapon.form===f?GOLD:HAIRLINE}`,background:weapon.form===f?`${GOLD}22`:PANEL2,color:weapon.form===f?GOLD:PARCH,...bodyFont,fontSize:12,cursor:"pointer"}}>{l}</button>
+        )}
+      </div>
+
+      {(weapon.form==="staff"||weapon.form==="pole") && (
+        <ActionCard seal="1" title="Melee Attack" mechanics={`+${d.weaponAtk} to hit, ${d.weaponDmg} Bludgeoning`} detail="Uses your Martial Arts die (not the weapon's base 1d6) plus DEX and the weapon's +2. Note: this is a weapon attack, not an Unarmed Strike — Flurry of Blows still requires Unarmed Strikes and can't be made with this weapon."/>
+      )}
+
+      {weapon.form==="pole" && (
+        <ActionCard seal="↔" title="Extended Reach" tone={GOLD} mechanics="~10 ft reach while in Pole form" detail="The item says it elongates as far as the surrounding space allows — treating that as roughly 10ft of melee reach in this form is this app's practical interpretation, not exact printed reach-property wording. Good for opportunity attacks at range, prodding switches/traps, or fishing something out of a pit."/>
+      )}
+
+      {weapon.form==="staff" && (
+        <ActionCard seal="2" title="Ranged Attack (Thrown)" mechanics={`+${d.weaponAtk} to hit, ${d.weaponDmg} Bludgeoning, range 30/120 ft`} detail="Throw it, it flies back to your hand right after the attack. Only works in Quarterstaff form."/>
+      )}
+
+      {(weapon.form==="staff"||weapon.form==="pole") && (
+        <ActionCard seal="★" title="Acrobatic Assist" tone={JADE} mechanics="Advantage on DEX (Acrobatics) checks" detail="Passive, while holding the weapon in Quarterstaff or Pole form."/>
+      )}
+
+      {weapon.form==="staff" && (
+        <ActionCard seal="R" title="Attack Deflection" tone={weapon.deflectUsed?MUTED:GOLD} mechanics={weapon.deflectUsed?"Already used — resets on a Short or Long Rest":"Reaction: +5 AC vs the triggering attack"} detail="Quarterstaff form only. Twirl it to add +5 AC against one incoming attack, possibly turning a hit into a miss.">
+        </ActionCard>
+      )}
+      {weapon.form==="staff" && !weapon.deflectUsed && (
+        <button onClick={()=>setWeapon({deflectUsed:true})} style={{width:"100%",background:GOLD,border:"none",borderRadius:12,padding:12,color:INK,...displayFont,fontSize:14,cursor:"pointer",marginBottom:10}}>Use Attack Deflection</button>
+      )}
+
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:PANEL2,border:`1px solid ${HAIRLINE}`,borderRadius:12,padding:14,marginTop:4}}>
+        <div>
+          <div style={{...displayFont,fontSize:14,color:PARCH}}>Dim Light (10ft)</div>
+          <div style={{...bodyFont,fontSize:11,color:MUTED,marginTop:2}}>Bonus Action to toggle, or free when you roll Initiative</div>
+        </div>
+        <button onClick={()=>setWeapon({dimLight:!weapon.dimLight})} style={{padding:"8px 14px",borderRadius:8,border:`1px solid ${weapon.dimLight?GOLD:HAIRLINE}`,background:weapon.dimLight?`${GOLD}22`:PANEL2,color:weapon.dimLight?GOLD:MUTED,...bodyFont,fontSize:12,cursor:"pointer"}}>{weapon.dimLight?"On":"Off"}</button>
+      </div>
+    </div>}
     {screen==="initiative" && <div><Header title="Rolling Initiative" onBack={()=>nav("home")}/>
       <ActionCard seal="1/day" title="Uncanny Metabolism" tone={GOLD} mechanics={`Refill all Focus Points + heal ${d.uncannyHeal}`}/>
-      <button onClick={()=>{ const r=doUncanny(); alert(`Focus refilled. Rolled ${r.roll} → healed ${r.healed} HP.`); }} style={{width:"100%",background:GOLD,border:"none",borderRadius:12,padding:14,color:INK,...displayFont,fontSize:15,cursor:"pointer"}}>Trigger Uncanny Metabolism</button>
+      <button onClick={()=>{ const r=doUncanny(); setUncannyResult(`Focus refilled. Rolled ${r.roll} → healed ${r.healed} HP.`); }} style={{width:"100%",background:GOLD,border:"none",borderRadius:12,padding:14,color:INK,...displayFont,fontSize:15,cursor:"pointer"}}>Trigger Uncanny Metabolism</button>
+      {uncannyResult && <div style={{...monoFont,fontSize:12,color:GOLD,marginTop:10,textAlign:"center"}}>{uncannyResult}</div>}
     </div>}
     {screen==="rest" && <div><Header title="Rest" onBack={()=>nav("home")}/>
-      <ActionCard seal="S" title="Short or Long Rest" tone={JADE} mechanics="All spent Focus Points return"/>
+      <ActionCard seal="S" title="Short or Long Rest" tone={JADE} mechanics="All spent Focus Points return · Attack Deflection resets"/>
       <ActionCard seal="L" title="Long Rest only" tone={JADE} mechanics="Wholeness of Body uses reset · HP fully restored"/>
-      <button onClick={()=>setFocus(d.focusMaxVal)} style={{width:"100%",background:PANEL2,border:`1px solid ${HAIRLINE}`,borderRadius:12,padding:12,color:PARCH,...bodyFont,fontSize:14,cursor:"pointer",marginBottom:10}}>Refill Focus Points</button>
-      <button onClick={()=>{ setWob(d.wobUses); setHp({...character.hp, current:character.hp.max}); }} style={{width:"100%",background:RED,border:"none",borderRadius:12,padding:12,color:PARCH,...bodyFont,fontSize:14,cursor:"pointer"}}>Take a Long Rest (full reset)</button>
+      <button onClick={()=>{ setFocus(d.focusMaxVal); setWeapon({deflectUsed:false}); }} style={{width:"100%",background:PANEL2,border:`1px solid ${HAIRLINE}`,borderRadius:12,padding:12,color:PARCH,...bodyFont,fontSize:14,cursor:"pointer",marginBottom:10}}>Refill Focus Points (Short/Long Rest)</button>
+      <button onClick={()=>{ setWob(d.wobUses); setHp({...character.hp, current:character.hp.max}); setWeapon({deflectUsed:false}); }} style={{width:"100%",background:RED,border:"none",borderRadius:12,padding:12,color:PARCH,...bodyFont,fontSize:14,cursor:"pointer"}}>Take a Long Rest (full reset)</button>
     </div>}
   </div>;
 }
