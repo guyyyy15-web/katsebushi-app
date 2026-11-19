@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#17151a"/>
+  <line x1="96" y1="416" x2="416" y2="96" stroke="#c9a35c" stroke-width="16" stroke-linecap="round"/>
+  <rect x="146" y="146" width="220" height="220" rx="28" fill="#2a1d1f" stroke="#a3413a" stroke-width="12"/>
+  <text x="256" y="306" text-anchor="middle" font-family="Noto Serif CJK JP, Noto Serif JP, serif" font-size="156" font-weight="700" fill="#e9e2d0">無</text>
+</svg>
