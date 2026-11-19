@@ -559,15 +559,19 @@ function DiceTray({pool,setPool,mod,setMod,throwOn,setThrowOn,last,onThrow,onClo
   const small={width:44,height:44,borderRadius:10,border:`1px solid ${HAIRLINE}`,background:PANEL2,color:PARCH,fontSize:18,cursor:"pointer"};
   return <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:20,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-end"}}>
     <div role="dialog" aria-label="Throw dice" onClick={e=>e.stopPropagation()} style={{width:"100%",background:PANEL,borderTop:`1px solid ${GOLD}66`,borderRadius:"18px 18px 0 0",padding:"14px 14px calc(16px + env(safe-area-inset-bottom))",...bodyFont}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-        <div style={{...displayFont,fontSize:18,color:PARCH}}>Throw dice</div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:10}}>
+        <div style={{...displayFont,fontSize:18,color:PARCH,flex:1}}>Throw dice</div>
+        <button onClick={()=>{ setPool({}); setMod(0); }} disabled={!count && !mod} aria-label="Reset all dice and the bonus" style={{minHeight:44,padding:"0 14px",borderRadius:10,border:`1px solid ${count||mod?RED+"99":HAIRLINE}`,background:count||mod?`${RED}22`:PANEL2,color:count||mod?PARCH:MUTED,opacity:count||mod?1:.5,...bodyFont,fontSize:13,cursor:"pointer"}}>↺ Reset</button>
         <button onClick={onClose} aria-label="Close" style={{...small,background:"none",border:"none",color:MUTED}}>✕</button>
       </div>
+      <div style={{...bodyFont,fontSize:11,color:MUTED,marginBottom:8}}>Tap a die to add one, − to take one off.</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:8,marginBottom:10}}>
-        {[4,6,8,10,12,20,100].map(n=><button key={n} onClick={()=>add(n,1)} aria-label={`Add a d${n}`} style={{...sq,borderColor:pool[n]?GOLD:HAIRLINE,color:pool[n]?GOLD:PARCH}}>
-          d{n}{pool[n]>0 && <span style={{position:"absolute",top:-6,right:-6,minWidth:22,height:22,borderRadius:11,background:GOLD,color:INK,...monoFont,fontSize:12,lineHeight:"22px"}}>{pool[n]}</span>}
-        </button>)}
-        <button onClick={()=>{ setPool({}); setMod(0); }} disabled={!count && !mod} style={{...sq,...bodyFont,fontSize:13,color:MUTED,opacity:count||mod?1:.4}}>Clear</button>
+        {[4,6,8,10,12,20,100].map(n=><div key={n} style={{display:"flex",flexDirection:"column",gap:4}}>
+          <button onClick={()=>add(n,1)} aria-label={`Add a d${n}`} style={{...sq,borderColor:pool[n]?GOLD:HAIRLINE,color:pool[n]?GOLD:PARCH}}>
+            d{n}{pool[n]>0 && <span style={{position:"absolute",top:-6,right:-6,minWidth:22,height:22,borderRadius:11,background:GOLD,color:INK,...monoFont,fontSize:12,lineHeight:"22px"}}>{pool[n]}</span>}
+          </button>
+          <button onClick={()=>add(n,-1)} disabled={!pool[n]} aria-label={`Remove a d${n}`} style={{height:44,borderRadius:10,border:`1px solid ${pool[n]?HAIRLINE:"transparent"}`,background:pool[n]?PANEL2:"transparent",color:pool[n]?PARCH:"transparent",fontSize:20,cursor:pool[n]?"pointer":"default"}}>−</button>
+        </div>)}
       </div>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
         <span style={{...bodyFont,fontSize:12,color:MUTED,flex:1}}>Bonus</span>

@@ -1,6 +1,6 @@
 // Offline: the app's own files are cached on install; fonts are cached the first time they load.
 // VERSION is set by `npm run build` from the files' content, so a release replaces the old cache.
-const VERSION = 'k-058063a9f4'
+const VERSION = 'k-404fe4ddde'
 const FILES = ['./', 'index.html', 'app.js', 'dice3d.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png']
 const FONTS = 'k-fonts'
 
