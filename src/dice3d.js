@@ -154,6 +154,9 @@ function fit(st) {
 export function throwDice(specs, { reducedMotion = false } = {}) {
   if (!stage) stage = makeStage()
   const st = stage
+  // the dice of the previous throw leave the table before new ones are thrown
+  st.cleanup?.()
+  st.cleanup = null
   st.el.style.display = 'block'
   st.banner.style.opacity = '0'
   st.hint.textContent = 'Tap to skip'
@@ -203,6 +206,9 @@ export function throwDice(specs, { reducedMotion = false } = {}) {
     dice.push({ die, mesh, body, item: it, part })
   }))
 
+  // registered at once (not when the throw ends), so the next throw or close() always clears these dice
+  st.cleanup = () => { for (const d of dice) { st.scene.remove(d.mesh); d.mesh.geometry.dispose(); for (const m of d.mesh.material) { m.map.dispose(); m.dispose() } } }
+
   const rotate = (q) => (v) => { const r = q.vmult(new Vec3(...v)); return [r.x, r.y, r.z] }
   const allRest = () => dice.every((d) => d.body.sleepState === Body.SLEEPING || (d.body.velocity.length() < 0.05 && d.body.angularVelocity.length() < 0.05))
   let nudges = 0
@@ -251,7 +257,7 @@ export function throwDice(specs, { reducedMotion = false } = {}) {
       requestAnimationFrame(step)
     }
     requestAnimationFrame(step)
-  }).finally(() => { st.cleanup = () => { for (const d of dice) { st.scene.remove(d.mesh); d.mesh.geometry.dispose(); for (const m of d.mesh.material) { m.map.dispose(); m.dispose() } } } })
+  })
 }
 
 /** The total on top of the dice: title, big number, a short line. */
@@ -275,5 +281,8 @@ export function close() {
 }
 
 export function onClose(fn) { if (!stage) stage = makeStage(); stage.onClose = fn }
+
+/** How many dice are on the table right now (for tests). */
+export const onTable = () => (stage ? stage.scene.children.filter((o) => o.isMesh && Array.isArray(o.material)).length : 0)
 
 export const ready = true
